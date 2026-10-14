@@ -1,0 +1,60 @@
+# Redmi Note 12 4G (tapas) - Lollipop açılışı.
+# Ramdisk: init_boot_a (Lollipop kökü) + vendor_boot (çekirdek modülleri).
+# /system: microSD'deki /lollipop/system.img, /data: RAM (tmpfs).
+import /init.tapas.modules.rc
+
+on early-init
+    # Modern init'in yaptığı binderfs kurulumunu biz yapıyoruz.
+    mkdir /dev/binderfs 0755 root root
+    mount binder binder /dev/binderfs stats=global
+    symlink /dev/binderfs/binder /dev/binder
+
+on init
+    # ADB için USB gadget (configfs + functionfs). Lollipop adbd,
+    # /dev/usb-ffs/adb/ep0 varsa functionfs kullanır.
+    mkdir /config 0755 root root
+    mount configfs none /config
+    mkdir /config/usb_gadget/g1 0770 shell shell
+    write /config/usb_gadget/g1/idVendor 0x18d1
+    write /config/usb_gadget/g1/idProduct 0x4ee7
+    write /config/usb_gadget/g1/bcdUSB 0x0200
+    write /config/usb_gadget/g1/max_speed high-speed
+    mkdir /config/usb_gadget/g1/strings/0x409 0770 shell shell
+    write /config/usb_gadget/g1/strings/0x409/serialnumber tapas-lollipop
+    write /config/usb_gadget/g1/strings/0x409/manufacturer Xiaomi
+    write /config/usb_gadget/g1/strings/0x409/product Lollipop_tapas
+    mkdir /config/usb_gadget/g1/configs/b.1 0770 shell shell
+    mkdir /config/usb_gadget/g1/configs/b.1/strings/0x409 0770 shell shell
+    write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration adb
+    mkdir /config/usb_gadget/g1/functions/ffs.adb 0770 shell shell
+    symlink /config/usb_gadget/g1/functions/ffs.adb /config/usb_gadget/g1/configs/b.1/f1
+    mkdir /dev/usb-ffs 0770 shell shell
+    mkdir /dev/usb-ffs/adb 0770 shell shell
+    mount functionfs adb /dev/usb-ffs/adb uid=2000,gid=2000
+
+on fs
+    # microSD: sdhci-msm modülü early-init'te yüklendi.
+    mkdir /sd 0775 root root
+    wait /dev/block/mmcblk1p1 15
+    mount vfat /dev/block/mmcblk1p1 /sd rw noatime
+    mount ext4 loop@/sd/lollipop/system.img /system ro
+    mount tmpfs tmpfs /data mode=0771,uid=1000,gid=1000
+    mount tmpfs tmpfs /cache mode=0770,uid=1000,gid=2001
+
+on boot
+    setprop sys.usb.config adb
+    start tapaslog
+
+on property:sys.usb.config=adb
+    start adbd
+    # adbd uç noktaları açınca gadget'ı USB denetleyicisine bağla.
+    wait /dev/usb-ffs/adb/ep1 10
+    write /config/usb_gadget/g1/UDC 4e00000.dwc3
+
+# Ekran yokken hata ayıklamak için: microSD'deki betik dmesg/logcat'i karta
+# yazar. Betik kartta olduğu için yeniden flaşlamadan değiştirilebilir.
+service tapaslog /system/bin/sh /sd/lollipop/log.sh
+    class core
+    user root
+    oneshot
+    disabled

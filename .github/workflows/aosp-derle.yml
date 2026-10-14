@@ -63,9 +63,11 @@ jobs:
             repo sync -c -j4 --no-tags --no-clone-bundle --fail-fast && break
             echo "sync başarısız, tekrar deneniyor ($i)"; sleep 60
           done
-          rm -rf .repo/projects .repo/project-objects
           du -sh .
           df -h .
+
+      - name: Tapas yamalarını uygula
+        run: bash depo/scripts/yamala.sh aosp
 
       - name: Derleme imajını hazırla (Ubuntu 14.04 + OpenJDK 7)
         run: docker build -t eski-aosp depo/docker
@@ -82,9 +84,16 @@ jobs:
         run: |
           OUT="aosp/$(cat aosp/product_out.txt)"
           mkdir -p cikti
-          for f in system.img ramdisk.img userdata.img cache.img; do
+          for f in ramdisk.img userdata.img cache.img; do
             [ -f "$OUT/$f" ] && sudo cp "$OUT/$f" cikti/
           done
+          # system.img sparse ise ham ext4'e çevir: telefonda loop ile bağlanacak.
+          sudo apt-get install -y -qq android-sdk-libsparse-utils >/dev/null
+          if simg2img "$OUT/system.img" cikti/system.img 2>/dev/null; then
+            echo "system.img sparse'tan ham imaja çevrildi"
+          else
+            sudo cp "$OUT/system.img" cikti/system.img
+          fi
           sudo tar -C "$OUT" -czf cikti/root.tar.gz root
           sudo chown -R "$USER" cikti
           ls -lh cikti
