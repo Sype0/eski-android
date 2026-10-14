@@ -1,0 +1,105 @@
+name: Eski AOSP derle
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "AOSP etiketi (5.x önerilir)"
+        default: "android-5.1.1_r38"
+        required: true
+      lunch:
+        description: "lunch hedefi"
+        default: "aosp_arm64-eng"
+        required: true
+
+jobs:
+  derle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      AOSP_BRANCH: ${{ inputs.branch }}
+      AOSP_LUNCH: ${{ inputs.lunch }}
+
+    steps:
+      # Ücretsiz runner'da ~14 GB boş yer var; gereksiz araçları silip
+      # / ve /mnt'yi birleştirerek çalışma dizinini ~70+ GB'a çıkarır.
+      - name: Disk alanı aç
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 10240
+          swap-size-mb: 8192
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
+      - name: Depoyu al
+        uses: actions/checkout@v4
+        with:
+          path: depo
+
+      - name: Disk durumu
+        run: df -h
+
+      # repo aracı yeni Python istiyor, o yüzden kaynak indirme işi
+      # eski Ubuntu konteynerinde değil, runner'ın kendisinde yapılıyor.
+      - name: repo aracını kur
+        run: |
+          mkdir -p ~/bin
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o ~/bin/repo
+          chmod +x ~/bin/repo
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          git config --global user.name "ci"
+          git config --global user.email "ci@localhost"
+          git config --global color.ui false
+
+      - name: AOSP kaynağını indir (sığ)
+        run: |
+          mkdir -p aosp && cd aosp
+          repo init -u https://android.googlesource.com/platform/manifest \
+            -b "$AOSP_BRANCH" --depth=1 --no-clone-bundle
+          for i in 1 2 3; do
+            repo sync -c -j4 --no-tags --no-clone-bundle --fail-fast && break
+            echo "sync başarısız, tekrar deneniyor ($i)"; sleep 60
+          done
+          rm -rf .repo/projects .repo/project-objects
+          du -sh .
+          df -h .
+
+      - name: Derleme imajını hazırla (Ubuntu 14.04 + OpenJDK 7)
+        run: docker build -t eski-aosp depo/docker
+
+      - name: Derle
+        run: |
+          docker run --rm \
+            -v "$PWD/aosp:/aosp" \
+            -v "$PWD/depo/scripts:/scripts:ro" \
+            -e AOSP_LUNCH \
+            eski-aosp bash /scripts/derle.sh
+
+      - name: Çıktıları topla
+        run: |
+          OUT="aosp/$(cat aosp/product_out.txt)"
+          mkdir -p cikti
+          for f in system.img ramdisk.img userdata.img cache.img; do
+            [ -f "$OUT/$f" ] && sudo cp "$OUT/$f" cikti/
+          done
+          sudo tar -C "$OUT" -czf cikti/root.tar.gz root
+          sudo chown -R "$USER" cikti
+          ls -lh cikti
+
+      - name: Çıktıları yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: aosp-${{ inputs.branch }}-${{ inputs.lunch }}
+          path: cikti/
+          compression-level: 0
+
+      - name: Derleme kaydını yükle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: derleme-kaydi
+          path: aosp/build.log
+          if-no-files-found: ignore
