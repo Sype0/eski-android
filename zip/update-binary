@@ -1,0 +1,43 @@
+#!/sbin/sh
+# OrangeFox/TWRP: init_boot.img'i aktif slotun init_boot bölümüne yazar.
+# Yedek almaz. Sadece tapas (Redmi Note 12 4G) içindir.
+
+OUTFD=/proc/self/fd/$2
+ZIPFILE="$3"
+BASLIK="@BASLIK@"
+
+ui_print() { echo "ui_print $1" > "$OUTFD"; echo "ui_print" > "$OUTFD"; }
+dur() { ui_print "HATA: $1"; exit 1; }
+
+ui_print "$BASLIK"
+
+CIHAZ=$(getprop ro.product.device)
+[ -z "$CIHAZ" ] && CIHAZ=$(getprop ro.build.product)
+case "$CIHAZ" in
+  *tapas*|*topaz*) ;;
+  *) dur "bu zip sadece tapas içindir (cihaz: $CIHAZ)" ;;
+esac
+
+SLOT=$(getprop ro.boot.slot_suffix)
+[ -z "$SLOT" ] && SLOT=$(grep -o 'androidboot.slot_suffix = "_[ab]"' /proc/bootconfig 2>/dev/null | grep -o '_[ab]')
+[ -z "$SLOT" ] && SLOT=$(grep -o 'androidboot.slot_suffix=_[ab]' /proc/cmdline | cut -d= -f2)
+[ -z "$SLOT" ] && dur "aktif slot bulunamadı"
+
+HEDEF=/dev/block/by-name/init_boot$SLOT
+[ -b "$HEDEF" ] || HEDEF=/dev/block/bootdevice/by-name/init_boot$SLOT
+[ -b "$HEDEF" ] || dur "init_boot$SLOT bölümü bulunamadı"
+
+TMP=/tmp/tapas-zip
+rm -rf $TMP; mkdir -p $TMP
+unzip -o "$ZIPFILE" init_boot.img -d $TMP >/dev/null || dur "zip açılamadı"
+
+IMG_BOYUT=$(wc -c < $TMP/init_boot.img)
+BOLUM_BOYUT=$(blockdev --getsize64 "$HEDEF")
+[ "$IMG_BOYUT" -le "$BOLUM_BOYUT" ] || dur "imaj ($IMG_BOYUT) bölümden ($BOLUM_BOYUT) büyük"
+
+ui_print "- Yazılıyor: init_boot$SLOT"
+dd if=$TMP/init_boot.img of="$HEDEF" bs=1M conv=fsync 2>/dev/null || dur "yazma başarısız"
+sync
+rm -rf $TMP
+ui_print "- Tamam. Yeniden başlatabilirsin."
+exit 0
