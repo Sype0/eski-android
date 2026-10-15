@@ -30,6 +30,11 @@ cp '$CIHAZ/init.tapas.rc' '$CIHAZ/init.tapas.modules.rc' .
 chmod 0750 init.tapas.rc init.tapas.modules.rc
 chown 0:0 init.tapas.rc init.tapas.modules.rc
 grep -q '^import /init.tapas.rc' init.rc || sed -i '1i import /init.tapas.rc' init.rc
+# userdata'ya dokunabilecek her şeyi çıkar: emülatör fstab'ı (mount_all) ve
+# Lollipop'un şifreleme servisleri (vdc cryptfs).
+rm -f init.goldfish.rc fstab.goldfish ueventd.goldfish.rc
+sed -i 's|^service defaultcrypto .*|service defaultcrypto /system/bin/sh -c exit|; s|^service encrypt .*|service encrypt /system/bin/sh -c exit|' init.rc
+if grep -q 'cryptfs' init.rc || ls fstab.* >/dev/null 2>&1; then echo 'HATA: userdata koruması uygulanamadı'; exit 1; fi
 find . | $BB cpio -o -H newc > '$IS/yeni.cpio' 2>/dev/null
 "
 
